@@ -55,7 +55,7 @@ class VolumeControl(QWidget):
         self.output_slider.valueChanged.connect(self.set_output_volume)
         layout.addWidget(self.output_slider)
 
-        self.output_label = QLabel(f'Volume: {self.selected_sink.volume.value_flat:.0%}')
+        self.output_label = QLabel(f'Audio Output Volume: {self.selected_sink.volume.value_flat:.0%}')
         self.output_label.setAlignment(Qt.AlignCenter)
         self.output_label.setStyleSheet("color: gold; font-size: 16px;")
         layout.addWidget(self.output_label)
@@ -77,7 +77,7 @@ class VolumeControl(QWidget):
         self.input_slider.valueChanged.connect(self.set_input_volume)
         layout.addWidget(self.input_slider)
 
-        self.input_label = QLabel(f'Volume: {self.selected_source.volume.value_flat:.0%}')
+        self.input_label = QLabel(f'microphone sensitivity: {self.selected_source.volume.value_flat:.0%}')
         self.input_label.setAlignment(Qt.AlignCenter)
         self.input_label.setStyleSheet("color: gold; font-size: 16px;")
         layout.addWidget(self.input_label)
@@ -119,18 +119,18 @@ class VolumeControl(QWidget):
         if self.selected_sink:
             volume = min(max(0.0, value / 100.0), 1.0)
             self.pulse.volume_set_all_chans(self.selected_sink, volume)
-            self.output_label.setText(f'Volume: {volume:.0%}')
+            self.output_label.setText(f'Audio Output Volume: {volume:.0%}')
 
     def select_source(self, index):
         self.selected_source = self.sources[index]
         self.input_slider.setValue(int(self.selected_source.volume.value_flat * 100))
-        self.input_label.setText(f'Volume: {self.selected_source.volume.value_flat:.0%}')
+        self.input_label.setText(f'Audio Volume: {self.selected_source.volume.value_flat:.0%}')
 
     def set_input_volume(self, value):
         if self.selected_source:
             volume = min(max(0.0, value / 100.0), 1.0)
             self.pulse.volume_set_all_chans(self.selected_source, volume)
-            self.input_label.setText(f'Volume: {volume:.0%}')
+            self.input_label.setText(f'microphone sensitivity: {volume:.0%}')
 
     def update_plot(self):
         try:
