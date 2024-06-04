@@ -1,39 +1,43 @@
 import sys
-import os
 import pulsectl
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPainter, QBrush
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QPushButton, QComboBox
+import pyaudio
+import numpy as np
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSlider, QLabel, QComboBox, QHBoxLayout, QPushButton
+import pyqtgraph as pg
+from pyqtgraph import PlotWidget
 
 class VolumeControl(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.pulse = pulsectl.Pulse('volume-control')  # Create a PulseAudio context
-        self.sinks = self.pulse.sink_list()  # Get a list of audio output sinks
-        self.sources = self.pulse.source_list()  # Get a list of audio input sources
+        self.pulse = pulsectl.Pulse('volume-control')
+        self.sinks = self.pulse.sink_list()
+        self.sources = self.pulse.source_list()
 
         self.selected_sink = self.sinks[0] if self.sinks else None
         self.selected_source = self.sources[0] if self.sources else None
 
-        # Initialize attributes
-        self.output_slider = None
-        self.output_label = None
-        self.input_slider = None
-        self.input_label = None
-
         self.init_ui()
 
+        self.audio = pyaudio.PyAudio()
+        self.stream = self.audio.open(format=pyaudio.paInt16,
+                                      channels=1,
+                                      rate=44100,
+                                      input=True,
+                                      frames_per_buffer=1024)
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_plot)
+        self.timer.start(50)  # Update every 50 ms
+
     def init_ui(self):
-        # Configure the main window
         self.setWindowTitle('Volume Control')
-        self.setGeometry(100, 100, 400, 300)
+        self.setGeometry(100, 100, 800, 600)
         self.setStyleSheet("background-color: #222;")
 
-        # Create a layout
         layout = QVBoxLayout()
 
-        # Output Sink Combo Box
         self.sink_combo = QComboBox()
         self.sink_combo.setStyleSheet("font-size: 14px; color: white;")
         self.sink_combo.currentIndexChanged.connect(self.select_sink)
@@ -41,7 +45,6 @@ class VolumeControl(QWidget):
             self.sink_combo.addItem(sink.description, sink)
         layout.addWidget(self.sink_combo)
 
-        # Volume slider for the selected output sink
         self.output_slider = QSlider(Qt.Horizontal)
         self.output_slider.setRange(0, 100)
         self.output_slider.setValue(int(self.selected_sink.volume.value_flat * 100))
@@ -52,13 +55,11 @@ class VolumeControl(QWidget):
         self.output_slider.valueChanged.connect(self.set_output_volume)
         layout.addWidget(self.output_slider)
 
-        # Volume label for the selected output sink
         self.output_label = QLabel(f'Volume: {self.selected_sink.volume.value_flat:.0%}')
         self.output_label.setAlignment(Qt.AlignCenter)
         self.output_label.setStyleSheet("color: gold; font-size: 16px;")
         layout.addWidget(self.output_label)
 
-        # Input Source Combo Box
         self.source_combo = QComboBox()
         self.source_combo.setStyleSheet("font-size: 14px; color: white;")
         self.source_combo.currentIndexChanged.connect(self.select_source)
@@ -66,7 +67,6 @@ class VolumeControl(QWidget):
             self.source_combo.addItem(source.description, source)
         layout.addWidget(self.source_combo)
 
-        # Volume slider for the selected input source
         self.input_slider = QSlider(Qt.Horizontal)
         self.input_slider.setRange(0, 100)
         self.input_slider.setValue(int(self.selected_source.volume.value_flat * 100))
@@ -77,53 +77,83 @@ class VolumeControl(QWidget):
         self.input_slider.valueChanged.connect(self.set_input_volume)
         layout.addWidget(self.input_slider)
 
-        # Volume label for the selected input source
         self.input_label = QLabel(f'Volume: {self.selected_source.volume.value_flat:.0%}')
         self.input_label.setAlignment(Qt.AlignCenter)
         self.input_label.setStyleSheet("color: gold; font-size: 16px;")
         layout.addWidget(self.input_label)
 
-        # Microphone input strength indicator (light)
-        self.input_light = QLabel()
-        self.input_light.setFixedSize(24, 24)
-        self.input_light.setStyleSheet("background-color: red; border-radius: 12px;")
-        layout.addWidget(self.input_light, alignment=Qt.AlignCenter)
+        self.plot_widget = PlotWidget()
+        self.plot_widget.setYRange(-30000, 30000)
+        self.plot_widget.setBackground('#222')
+        self.plot_data = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
+        layout.addWidget(self.plot_widget)
+
+        controls_layout = QHBoxLayout()
+
+        self.y_range_slider = QSlider(Qt.Horizontal)
+        self.y_range_slider.setRange(5000, 50000)
+        self.y_range_slider.setValue(30000)
+        self.y_range_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background-color: #444; height: 8px; border: none; }"
+            "QSlider::handle:horizontal { background-color: gold; width: 16px; border: none; }"
+        )
+        self.y_range_slider.valueChanged.connect(self.adjust_y_range)
+        controls_layout.addWidget(QLabel("Y-Range:"))
+        controls_layout.addWidget(self.y_range_slider)
+
+        self.db_label = QLabel('Level: 0 dB')
+        self.db_label.setAlignment(Qt.AlignCenter)
+        self.db_label.setStyleSheet("color: gold; font-size: 16px;")
+        controls_layout.addWidget(self.db_label)
+
+        layout.addLayout(controls_layout)
 
         self.setLayout(layout)
 
     def select_sink(self, index):
         self.selected_sink = self.sinks[index]
-        if self.output_slider:
-            self.output_slider.setValue(int(self.selected_sink.volume.value_flat * 100))
-        if self.output_label:
-            self.output_label.setText(f'Volume: {self.selected_sink.volume.value_flat:.0%}')
+        self.output_slider.setValue(int(self.selected_sink.volume.value_flat * 100))
+        self.output_label.setText(f'Volume: {self.selected_sink.volume.value_flat:.0%}')
 
     def set_output_volume(self, value):
         if self.selected_sink:
-            # Calculate left and right channel volumes
             volume = min(max(0.0, value / 100.0), 1.0)
             self.pulse.volume_set_all_chans(self.selected_sink, volume)
-            if self.output_label:
-                self.output_label.setText(f'Volume: {volume:.0%}')
+            self.output_label.setText(f'Volume: {volume:.0%}')
 
     def select_source(self, index):
         self.selected_source = self.sources[index]
-        if self.input_slider:
-            self.input_slider.setValue(int(self.selected_source.volume.value_flat * 100))
-        if self.input_label:
-            self.input_label.setText(f'Volume: {self.selected_source.volume.value_flat:.0%}')
+        self.input_slider.setValue(int(self.selected_source.volume.value_flat * 100))
+        self.input_label.setText(f'Volume: {self.selected_source.volume.value_flat:.0%}')
 
     def set_input_volume(self, value):
         if self.selected_source:
-            # Calculate left and right channel volumes
             volume = min(max(0.0, value / 100.0), 1.0)
             self.pulse.volume_set_all_chans(self.selected_source, volume)
-            if self.input_label:
-                self.input_label.setText(f'Volume: {volume:.0%}')
+            self.input_label.setText(f'Volume: {volume:.0%}')
 
-            # Update microphone input strength indicator (light)
-            input_strength = int(volume * 255)
-            self.input_light.setStyleSheet(f"background-color: rgb({255 - input_strength}, {input_strength}, 0);")
+    def update_plot(self):
+        try:
+            data = self.stream.read(1024, exception_on_overflow=False)
+            data_int = np.frombuffer(data, dtype=np.int16)
+            self.plot_data.setData(data_int)
+
+            # Update the dB level
+            rms = np.sqrt(np.mean(data_int**2))
+            db = 20 * np.log10(rms) if rms > 0 else -np.inf
+            self.db_label.setText(f'Level: {db:.2f} dB')
+        except IOError as e:
+            print(f"Error reading audio stream: {e}")
+
+    def adjust_y_range(self, value):
+        self.plot_widget.setYRange(-value, value)
+
+    def closeEvent(self, event):
+        self.timer.stop()
+        self.stream.stop_stream()
+        self.stream.close()
+        self.audio.terminate()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
